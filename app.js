@@ -1,7 +1,9 @@
 /* LiveTunes — app logic
-   Every song plays FULL-LENGTH and free via Audius (no API key, no previews).
-   Live radio streams full continuous audio. A ▶️ button opens the official
-   track on YouTube. Multiple playlists + light/dark theme persist in localStorage. */
+   Two playback engines, routed per track:
+     • "yt"    — Top 50 English/Mandarin hits via the embedded YouTube player
+     • "audio" — live radio + Audius search results via <audio>
+   A wrong/blocked YouTube id auto-falls back to opening a YouTube search.
+   Multiple playlists + light/dark theme persist in localStorage. */
 
 const audio = document.getElementById("audio");
 const els = {
@@ -13,6 +15,8 @@ const els = {
   newPlaylistBtn: document.getElementById("new-playlist-btn"),
   libraryList: document.getElementById("library-list"),
   addMenu: document.getElementById("add-menu"),
+  ytHost: document.getElementById("yt-host"),
+  ytClose: document.getElementById("yt-close"),
   art: document.getElementById("player-art"),
   pTitle: document.getElementById("player-title"),
   pArtist: document.getElementById("player-artist"),
@@ -34,8 +38,9 @@ const state = {
   queue: [],
   index: -1,
   isLive: false,
+  engine: "audio", // "audio" | "yt"
   current: null,
-  audiusCache: {}, // english / mandarin lists, cached for the session
+  audiusCache: {},
 };
 
 /* ---------- Persistent store ---------- */
@@ -108,7 +113,34 @@ function toggleTheme() {
   saveStore(data); applyTheme(data.theme);
 }
 
-/* ---------- Audius (free full songs, no API key) ---------- */
+/* ---------- YouTube IFrame player ---------- */
+let ytPlayer = null, ytReady = false, pendingYt = null;
+window.onYouTubeIframeAPIReady = function () {
+  ytPlayer = new YT.Player("yt-player", {
+    width: "300", height: "169",
+    playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
+    events: {
+      onReady: () => { ytReady = true; if (pendingYt) { ytPlayer.loadVideoById(pendingYt); pendingYt = null; } },
+      onStateChange: (e) => {
+        if (e.data === YT.PlayerState.PLAYING) els.playBtn.textContent = "⏸";
+        else if (e.data === YT.PlayerState.PAUSED) els.playBtn.textContent = "▶";
+        else if (e.data === YT.PlayerState.ENDED) playNext();
+      },
+      onError: () => { // bad/blocked id → open the correct search instead
+        if (state.current) openYouTube(state.current.ytSearch || `${state.current.title} ${state.current.artist}`);
+      },
+    },
+  });
+};
+(function loadYT() {
+  const tag = document.createElement("script");
+  tag.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(tag);
+})();
+function showYtHost(show) { els.ytHost.hidden = !show; }
+function pauseYt() { if (ytReady && ytPlayer.pauseVideo) ytPlayer.pauseVideo(); }
+
+/* ---------- Audius (free full songs for search) ---------- */
 let audiusHost = null;
 async function getAudiusHost() {
   if (audiusHost) return audiusHost;
@@ -120,50 +152,33 @@ async function getAudiusHost() {
   } catch { audiusHost = null; }
   return audiusHost;
 }
-function audiusToTrack(t, host) {
-  return {
-    id: "au" + t.id,
-    title: t.title,
-    artist: (t.user && t.user.name) || "Unknown artist",
-    art: (t.artwork && (t.artwork["480x480"] || t.artwork["150x150"])) || "",
-    src: `${host}/v1/tracks/${t.id}/stream?app_name=LiveTunes`,
-    type: "song",
-    yt: `${t.title} ${(t.user && t.user.name) || ""}`,
-  };
-}
-async function audiusSearch(query, limit = 25) {
+async function audiusSearch(query, limit = 40) {
   const host = await getAudiusHost();
   if (!host) return [];
   try {
     const res = await fetch(`${host}/v1/tracks/search?query=${encodeURIComponent(query)}&app_name=LiveTunes`);
     const data = await res.json();
-    return (data.data || []).filter((t) => t.is_streamable !== false).slice(0, limit).map((t) => audiusToTrack(t, host));
+    return (data.data || []).filter((t) => t.is_streamable !== false).slice(0, limit).map((t) => ({
+      id: "au" + t.id, title: t.title, artist: (t.user && t.user.name) || "Unknown artist",
+      art: (t.artwork && (t.artwork["480x480"] || t.artwork["150x150"])) || "",
+      src: `${host}/v1/tracks/${t.id}/stream?app_name=LiveTunes`, engine: "audio", type: "song",
+      ytSearch: `${t.title} ${(t.user && t.user.name) || ""}`,
+    }));
   } catch { return []; }
-}
-async function audiusTrending(limit = 50) {
-  const host = await getAudiusHost();
-  if (!host) return [];
-  try {
-    const res = await fetch(`${host}/v1/tracks/trending?app_name=LiveTunes`);
-    const data = await res.json();
-    return (data.data || []).slice(0, limit).map((t) => audiusToTrack(t, host));
-  } catch { return []; }
-}
-/* Run several searches and merge unique tracks — used for the Mandarin list. */
-async function audiusSearchMany(queries, limit = 50) {
-  const seen = new Set();
-  const out = [];
-  for (const q of queries) {
-    const tracks = await audiusSearch(q, 12);
-    for (const t of tracks) {
-      if (!seen.has(t.id)) { seen.add(t.id); out.push(t); }
-      if (out.length >= limit) return out;
-    }
-  }
-  return out;
 }
 
-/* ---------- YouTube (full official song, opens in a new tab) ---------- */
+/* ---------- Curated chart tracks ---------- */
+function chartTrack(item) {
+  return {
+    id: "yt" + (item.y || item.t),
+    title: item.t, artist: item.a,
+    ytId: item.y || "", engine: "yt", type: "song",
+    art: item.y ? `https://i.ytimg.com/vi/${item.y}/mqdefault.jpg` : "",
+    ytSearch: `${item.t} ${item.a}`,
+  };
+}
+
+/* ---------- YouTube search link ---------- */
 function openYouTube(query) {
   window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(query), "_blank", "noopener");
 }
@@ -173,26 +188,50 @@ function playTrack(track, queue, idx) {
   if (queue) { state.queue = queue; state.index = idx; }
   state.current = track;
   state.isLive = track.type === "station";
-  const source = track.type === "station" ? track.url : track.src;
-  if (!source) {
-    els.pTitle.textContent = track.title + " — no audio (try ▶️ YouTube)";
-    els.pArtist.textContent = track.artist;
-    els.pYt.hidden = track.type !== "song";
+
+  if (track.engine === "yt") {
+    state.engine = "yt";
+    audio.pause();
+    setPlayerInfo(track);
+    if (!track.ytId) {            // no embedded id → open correct search
+      openYouTube(track.ytSearch);
+      showYtHost(false);
+      els.playBtn.textContent = "▶";
+    } else {
+      showYtHost(true);
+      if (ytReady) ytPlayer.loadVideoById(track.ytId);
+      else pendingYt = track.ytId;
+    }
+    refreshFavStates(); markPlayingRows();
     return;
   }
+
+  // audio engine (radio + Audius)
+  state.engine = "audio";
+  pauseYt(); showYtHost(false);
+  const source = track.type === "station" ? track.url : track.src;
+  if (!source) { setPlayerInfo(track); return; }
   audio.src = source;
   els.liveBadge.hidden = !state.isLive;
   audio.play().catch(() => {});
+  setPlayerInfo(track);
+  els.playBtn.textContent = "⏸";
+  refreshFavStates(); markPlayingRows();
+}
+function setPlayerInfo(track) {
   els.art.src = track.art || placeholderArt();
   els.pTitle.textContent = track.title;
   els.pArtist.textContent = track.artist;
-  els.playBtn.textContent = "⏸";
   els.pYt.hidden = track.type !== "song";
-  refreshFavStates();
-  markPlayingRows();
 }
 function togglePlay() {
   if (!state.current) return;
+  if (state.engine === "yt") {
+    if (!ytReady) return;
+    if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
+    else ytPlayer.playVideo();
+    return;
+  }
   if (audio.paused) { audio.play(); els.playBtn.textContent = "⏸"; }
   else { audio.pause(); els.playBtn.textContent = "▶"; }
 }
@@ -211,11 +250,19 @@ function placeholderArt() {
     '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#18213a"/><text x="50%" y="54%" font-size="34" text-anchor="middle" dominant-baseline="middle">🎵</text></svg>'
   );
 }
+/* Poll the YouTube player for progress (it has no timeupdate event). */
+setInterval(() => {
+  if (state.engine !== "yt" || !ytReady || !ytPlayer.getDuration) return;
+  const cur = ytPlayer.getCurrentTime() || 0, dur = ytPlayer.getDuration() || 0;
+  els.timeCur.textContent = fmtTime(cur);
+  els.timeTot.textContent = fmtTime(dur);
+  if (!seeking) els.seek.value = dur ? (cur / dur) * 100 : 0;
+}, 300);
 
 /* ---------- Views ---------- */
 const VIEW_TITLES = {
   home: "Home", live: "Live Radio",
-  english: "English Songs", mandarin: "Mandarin Songs",
+  english: "Top 50 English Songs", mandarin: "Top 50 Mandarin Songs",
   search: "Search Results",
 };
 function setView(view, playlistId) {
@@ -234,8 +281,8 @@ function render() {
   switch (state.view) {
     case "home": return renderHome();
     case "live": return renderStations();
-    case "english": return renderSongs("english");
-    case "mandarin": return renderSongs("mandarin");
+    case "english": return renderChart(TOP_ENGLISH);
+    case "mandarin": return renderChart(TOP_MANDARIN);
     case "playlist": return renderPlaylist();
   }
 }
@@ -243,8 +290,8 @@ function render() {
 function renderHome() {
   els.view.innerHTML = `
     <div class="hero-grid">
-      <div class="hero-card" data-go="english"><span class="hero-emoji">🇬🇧</span><h3>English Songs</h3><p>Full-length English tracks, free to play.</p></div>
-      <div class="hero-card" data-go="mandarin"><span class="hero-emoji">🇨🇳</span><h3>Mandarin Songs</h3><p>華語歌曲 — full songs, free to play.</p></div>
+      <div class="hero-card" data-go="english"><span class="hero-emoji">🇬🇧</span><h3>Top 50 English</h3><p>The biggest English hits — full songs.</p></div>
+      <div class="hero-card" data-go="mandarin"><span class="hero-emoji">🇨🇳</span><h3>Top 50 Mandarin</h3><p>華語金曲 — the top 50, full songs.</p></div>
       <div class="hero-card" data-go="live"><span class="hero-emoji">📻</span><h3>Live Radio</h3><p>Stations playing right now, 24/7.</p></div>
       <div class="hero-card" data-go="liked"><span class="hero-emoji">❤️</span><h3>Liked Songs</h3><p>Everything you've hearted, in one place.</p></div>
     </div>
@@ -277,7 +324,7 @@ function renderStations() {
 function renderStationGrid(container, stations) {
   container.innerHTML = "";
   stations.forEach((s) => {
-    const track = { id: "st" + s.name, title: s.name, artist: s.genre, art: "", type: "station", url: s.url };
+    const track = { id: "st" + s.name, title: s.name, artist: s.genre, art: "", type: "station", engine: "audio", url: s.url };
     const card = document.createElement("div");
     card.className = "station-card" + (state.current && state.current.id === track.id ? " playing" : "");
     card.innerHTML = `<div class="station-emoji">${s.emoji}</div><div class="station-name">${escapeHtml(s.name)}</div><div class="station-genre">${escapeHtml(s.genre)}</div>`;
@@ -286,25 +333,13 @@ function renderStationGrid(container, stations) {
   });
 }
 
-async function renderSongs(kind) {
-  const label = kind === "mandarin" ? "Mandarin" : "English";
-  els.view.innerHTML = `<div class="hint">Full songs, free &amp; legal via Audius. Tap any track to play it in full. ▶️ opens the official version on YouTube.</div><div class="loading">Loading ${label} full songs…</div>`;
-  let tracks = state.audiusCache[kind];
-  if (!tracks) {
-    tracks = kind === "mandarin"
-      ? await audiusSearchMany(MANDARIN_QUERIES, 50)
-      : await audiusTrending(50);
-    if (tracks.length) state.audiusCache[kind] = tracks;
-  }
-  if (state.view !== kind) return;
-  if (!tracks.length) {
-    els.view.innerHTML = `<div class="empty">Couldn't load ${label} songs right now.<br>Check your connection and try again.</div>`;
-    return;
-  }
-  const list = document.createElement("div");
-  list.className = "track-list";
-  els.view.querySelector(".loading").replaceWith(list);
-  tracks.forEach((t, i) => list.appendChild(trackRow(t, i, tracks, { rank: true })));
+function renderChart(list) {
+  const tracks = list.map(chartTrack);
+  els.view.innerHTML = `<div class="hint">Tap a song to play the full track in the YouTube player. ▶️ opens it on YouTube directly.</div>`;
+  const wrap = document.createElement("div");
+  wrap.className = "track-list";
+  els.view.appendChild(wrap);
+  tracks.forEach((t, i) => wrap.appendChild(trackRow(t, i, tracks, { rank: true })));
 }
 
 function trackRow(track, i, queue, opts = {}) {
@@ -325,7 +360,7 @@ function trackRow(track, i, queue, opts = {}) {
       <div class="track-artist">${escapeHtml(track.artist)}</div>
     </div>
     <div class="track-actions">
-      <button class="icon-btn yt-btn" title="Watch on YouTube">▶️</button>
+      <button class="icon-btn yt-btn" title="Open on YouTube">▶️</button>
       <button class="icon-btn add-btn" title="Add to playlist">＋</button>
       <button class="icon-btn fav-btn ${liked ? "fav" : ""}" title="Like">${liked ? "❤️" : "🤍"}</button>
       ${removeBtn}
@@ -336,7 +371,7 @@ function trackRow(track, i, queue, opts = {}) {
   });
   row.querySelector(".fav-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleLiked(track); });
   row.querySelector(".add-btn").addEventListener("click", (e) => { e.stopPropagation(); openAddMenu(e.currentTarget, track); });
-  row.querySelector(".yt-btn").addEventListener("click", (e) => { e.stopPropagation(); openYouTube(track.yt || `${track.title} ${track.artist}`); });
+  row.querySelector(".yt-btn").addEventListener("click", (e) => { e.stopPropagation(); openYouTube(track.ytSearch || `${track.title} ${track.artist}`); });
   if (opts.removable)
     row.querySelector(".remove-btn").addEventListener("click", (e) => {
       e.stopPropagation(); removeFromPlaylist(state.openPlaylist, track.id); render(); renderLibrary();
@@ -459,17 +494,17 @@ function renderLibrary() {
 async function runSearch(q) {
   if (!q.trim()) return;
   setView("search");
-  els.view.innerHTML = `<div class="loading">Searching for “${escapeHtml(q)}”…</div>`;
+  els.view.innerHTML = `<div class="hint">Full songs from Audius. For a specific chart hit, use the ▶️ button to open it on YouTube.</div><div class="loading">Searching for “${escapeHtml(q)}”…</div>`;
   const tracks = await audiusSearch(q, 40);
   if (state.view !== "search") return;
+  const loader = els.view.querySelector(".loading");
   if (!tracks.length) {
-    els.view.innerHTML = `<div class="empty">No full songs found for “${escapeHtml(q)}”.<br>Try the ▶️ button on a song, or search a different term.</div>`;
+    loader.outerHTML = `<div class="empty">No full songs found for “${escapeHtml(q)}”.<br>Tip: open it on YouTube via the ▶️ button on any chart song.</div>`;
     return;
   }
   const wrap = document.createElement("div");
   wrap.className = "track-list";
-  els.view.innerHTML = "";
-  els.view.appendChild(wrap);
+  loader.replaceWith(wrap);
   tracks.forEach((t, i) => wrap.appendChild(trackRow(t, i, tracks, {})));
 }
 
@@ -507,27 +542,44 @@ els.playBtn.addEventListener("click", togglePlay);
 els.nextBtn.addEventListener("click", playNext);
 els.prevBtn.addEventListener("click", playPrev);
 els.fav.addEventListener("click", () => { if (state.current && state.current.type === "song") toggleLiked(state.current); });
-els.pYt.addEventListener("click", () => { if (state.current) openYouTube(state.current.yt || `${state.current.title} ${state.current.artist}`); });
+els.pYt.addEventListener("click", () => { if (state.current) openYouTube(state.current.ytSearch || `${state.current.title} ${state.current.artist}`); });
 els.themeBtn.addEventListener("click", toggleTheme);
+els.ytClose.addEventListener("click", () => showYtHost(false));
 els.newPlaylistBtn.addEventListener("click", () => {
   const name = prompt("New playlist name");
   if (name && name.trim()) { const id = createPlaylist(name.trim()); setView("playlist", id); }
 });
-els.volume.addEventListener("input", () => { audio.volume = els.volume.value / 100; });
+
+els.volume.addEventListener("input", () => {
+  const v = els.volume.value;
+  audio.volume = v / 100;
+  if (ytReady && ytPlayer.setVolume) ytPlayer.setVolume(+v);
+});
 audio.volume = els.volume.value / 100;
-els.seek.addEventListener("input", () => {
+
+let seeking = false;
+els.seek.addEventListener("input", () => { seeking = true; });
+els.seek.addEventListener("change", () => {
+  seeking = false;
+  if (state.engine === "yt") {
+    if (ytReady) { const dur = ytPlayer.getDuration() || 0; ytPlayer.seekTo((els.seek.value / 100) * dur, true); }
+    return;
+  }
   if (state.isLive || !audio.duration) return;
   audio.currentTime = (els.seek.value / 100) * audio.duration;
 });
+
 audio.addEventListener("timeupdate", () => {
+  if (state.engine !== "audio") return;
   if (state.isLive) { els.timeCur.textContent = "LIVE"; els.timeTot.textContent = ""; els.seek.value = 0; return; }
   els.timeCur.textContent = fmtTime(audio.currentTime);
   els.timeTot.textContent = fmtTime(audio.duration);
-  els.seek.value = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+  if (!seeking) els.seek.value = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
 });
-audio.addEventListener("ended", playNext);
-audio.addEventListener("play", () => { els.playBtn.textContent = "⏸"; });
-audio.addEventListener("pause", () => { els.playBtn.textContent = "▶"; });
+audio.addEventListener("ended", () => { if (state.engine === "audio") playNext(); });
+audio.addEventListener("play", () => { if (state.engine === "audio") els.playBtn.textContent = "⏸"; });
+audio.addEventListener("pause", () => { if (state.engine === "audio") els.playBtn.textContent = "▶"; });
+
 els.searchBtn.addEventListener("click", () => runSearch(els.searchInput.value));
 els.searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(els.searchInput.value); });
 

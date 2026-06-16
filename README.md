@@ -6,12 +6,13 @@ no API keys.
 
 ## Features
 
-- **🇬🇧 English Songs** & **🇨🇳 Mandarin Songs** — **full-length** tracks, streamed **free and
-  legally** from [Audius](https://audius.co) (no API key). Every track plays end to end — no previews.
+- **🇬🇧 Top 50 English** & **🇨🇳 Top 50 Mandarin** — curated **hit lists** that play **full songs**
+  through an **embedded YouTube player** (no API key). A wrong/blocked video id auto-falls back to
+  opening the correct YouTube search.
 - **📻 Live Radio** — streams real public internet radio in the browser, 24/7. Stations are grouped
   into **Chill & Eclectic** (SomaFM) and **Mandarin & Asian** pop.
-- **▶️ Watch on YouTube** — every song has a button that opens the official version on YouTube.
-- **🔍 Search** — searches Audius for full songs you can play right away.
+- **▶️ Open on YouTube** — every song has a button that opens the official version on YouTube.
+- **🔍 Search** — searches [Audius](https://audius.co) for free full songs you can play right away.
 - **❤️ Multiple playlists** — a built-in **Liked Songs** plus any number of custom playlists you
   create. Use ＋ on a song to add it to one (or several), **drag to reorder**, rename, or delete.
   Everything is stored in your browser (`localStorage`) and survives reloads.
@@ -57,11 +58,9 @@ https://<your-username>.github.io/livemusic/
 
 ## Notes
 
-- **All songs play full-length** via Audius (free, legal, no key). Audius's catalog leans toward
-  **independent artists**, so the English/Mandarin lists are full free tracks rather than a
-  major-label "Top 40". The **Mandarin** list is built by merging several Chinese/Mandarin
-  search terms, so its size depends on Audius's catalog.
-- For a specific **major-label hit** that isn't on Audius, use the **▶️ YouTube** button on any
-  song to open the official version — the legal, free way to stream label-owned music.
-- Everything is network-dependent (Audius, radio, YouTube). If a source is blocked, the list
-  simply won't load.
+- The **Top 50** lists play full songs via YouTube's official embedded player (the legal, free way
+  to stream label-owned music). English songs carry hardcoded video ids; Mandarin songs without an
+  id (`y: ""` in `data.js`) open the correct YouTube search on tap. **If any video plays the wrong
+  thing, fix its id in `data.js`** — that's the only field to change.
+- **Search** uses Audius (free full songs, indie-leaning) and **Live Radio** streams full audio.
+- Everything is network-dependent (YouTube, Audius, radio). If a source is blocked it won't play.

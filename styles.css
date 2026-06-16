@@ -230,7 +230,24 @@ body {
 .badge.prev { background: rgba(255,255,255,.08); color: var(--text-dim); }
 .yt-btn { font-size: 15px; }
 .yt-btn:hover { color: #ff2f46; }
-#player-badge { margin-right: 2px; }
+
+/* Embedded YouTube player panel */
+.yt-host {
+  position: fixed; right: 16px; bottom: calc(var(--player-h) + 12px);
+  width: 300px; max-width: 80vw; z-index: 40;
+  background: #000; border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden; box-shadow: 0 18px 46px rgba(0,0,0,.55);
+}
+.yt-host-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-elev); padding: 6px 6px 6px 12px;
+  font-size: 12px; font-weight: 700; color: var(--text-dim);
+}
+.yt-host #yt-player, .yt-host iframe { width: 100%; height: 169px; display: block; border: 0; }
+@media (max-width: 760px) {
+  .yt-host { width: 200px; right: 10px; }
+  .yt-host #yt-player, .yt-host iframe { height: 113px; }
+}
 
 /* Player bar */
 .player {
