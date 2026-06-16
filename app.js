@@ -223,6 +223,25 @@ function setPlayerInfo(track) {
   els.pTitle.textContent = track.title;
   els.pArtist.textContent = track.artist;
   els.pYt.hidden = track.type !== "song";
+  updateMediaSession(track);
+}
+/* Lock-screen / background metadata + controls (works for the <audio> engine). */
+function updateMediaSession(track) {
+  if (!("mediaSession" in navigator)) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: track.title || "",
+      artist: track.artist || "",
+      album: "LiveTunes",
+      artwork: track.art ? [
+        { src: track.art, sizes: "256x256", type: "image/jpeg" },
+        { src: track.art, sizes: "512x512", type: "image/jpeg" },
+      ] : [],
+    });
+  } catch {}
+}
+function setMediaPlaybackState(s) {
+  if ("mediaSession" in navigator) navigator.mediaSession.playbackState = s;
 }
 function togglePlay() {
   if (!state.current) return;
@@ -577,8 +596,22 @@ audio.addEventListener("timeupdate", () => {
   if (!seeking) els.seek.value = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
 });
 audio.addEventListener("ended", () => { if (state.engine === "audio") playNext(); });
-audio.addEventListener("play", () => { if (state.engine === "audio") els.playBtn.textContent = "⏸"; });
-audio.addEventListener("pause", () => { if (state.engine === "audio") els.playBtn.textContent = "▶"; });
+audio.addEventListener("play", () => { if (state.engine === "audio") { els.playBtn.textContent = "⏸"; setMediaPlaybackState("playing"); } });
+audio.addEventListener("pause", () => { if (state.engine === "audio") { els.playBtn.textContent = "▶"; setMediaPlaybackState("paused"); } });
+
+/* Lock-screen / headset / notification controls for background audio. */
+if ("mediaSession" in navigator) {
+  const ms = navigator.mediaSession;
+  ms.setActionHandler("play", () => { if (state.engine === "audio") audio.play(); else togglePlay(); });
+  ms.setActionHandler("pause", () => { if (state.engine === "audio") audio.pause(); else togglePlay(); });
+  ms.setActionHandler("previoustrack", () => playPrev());
+  ms.setActionHandler("nexttrack", () => playNext());
+  try {
+    ms.setActionHandler("seekto", (e) => {
+      if (state.engine === "audio" && audio.duration && e.seekTime != null) audio.currentTime = e.seekTime;
+    });
+  } catch {}
+}
 
 els.searchBtn.addEventListener("click", () => runSearch(els.searchInput.value));
 els.searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(els.searchInput.value); });

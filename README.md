@@ -64,3 +64,13 @@ https://<your-username>.github.io/livemusic/
   thing, fix its id in `data.js`** — that's the only field to change.
 - **Search** uses Audius (free full songs, indie-leaning) and **Live Radio** streams full audio.
 - Everything is network-dependent (YouTube, Audius, radio). If a source is blocked it won't play.
+
+## Background / lock-screen playback
+
+- **Live Radio and Audius search results** use the HTML5 `<audio>` engine, so they keep playing when
+  the phone is **locked or the browser is backgrounded**, show **lock-screen controls** (play/pause,
+  next/previous) via the Media Session API, and **auto-advance** to the next track.
+- The **Top 50 (YouTube) songs cannot play while locked** — Safari and YouTube block background audio
+  for embedded players on mobile. That restriction can't be bypassed from a website; it requires a
+  native app or YouTube Premium. For locked-screen listening, use Live Radio or play full songs from
+  Search (Audius).
