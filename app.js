@@ -1,10 +1,7 @@
 /* LiveTunes — app logic
-   Playback sources, in order of "fullness":
-     • Live radio (continuous, full)            — STATIONS
-     • Audius full songs (free, no key)         — api.audius.co
-     • iTunes 30-second previews (fallback)     — itunes.apple.com
-   Plus a "Watch on YouTube" button on every song for the full official track.
-   Multiple playlists + light/dark theme are persisted in localStorage. */
+   Every song plays FULL-LENGTH and free via Audius (no API key, no previews).
+   Live radio streams full continuous audio. A ▶️ button opens the official
+   track on YouTube. Multiple playlists + light/dark theme persist in localStorage. */
 
 const audio = document.getElementById("audio");
 const els = {
@@ -19,7 +16,6 @@ const els = {
   art: document.getElementById("player-art"),
   pTitle: document.getElementById("player-title"),
   pArtist: document.getElementById("player-artist"),
-  pBadge: document.getElementById("player-badge"),
   pYt: document.getElementById("player-yt"),
   fav: document.getElementById("player-fav"),
   playBtn: document.getElementById("play-btn"),
@@ -39,7 +35,7 @@ const state = {
   index: -1,
   isLive: false,
   current: null,
-  cache: {},
+  audiusCache: {}, // english / mandarin lists, cached for the session
 };
 
 /* ---------- Persistent store ---------- */
@@ -131,7 +127,6 @@ function audiusToTrack(t, host) {
     artist: (t.user && t.user.name) || "Unknown artist",
     art: (t.artwork && (t.artwork["480x480"] || t.artwork["150x150"])) || "",
     src: `${host}/v1/tracks/${t.id}/stream?app_name=LiveTunes`,
-    full: true,
     type: "song",
     yt: `${t.title} ${(t.user && t.user.name) || ""}`,
   };
@@ -145,7 +140,7 @@ async function audiusSearch(query, limit = 25) {
     return (data.data || []).filter((t) => t.is_streamable !== false).slice(0, limit).map((t) => audiusToTrack(t, host));
   } catch { return []; }
 }
-async function audiusTrending(limit = 40) {
+async function audiusTrending(limit = 50) {
   const host = await getAudiusHost();
   if (!host) return [];
   try {
@@ -154,44 +149,18 @@ async function audiusTrending(limit = 40) {
     return (data.data || []).slice(0, limit).map((t) => audiusToTrack(t, host));
   } catch { return []; }
 }
-
-/* ---------- iTunes preview resolver ---------- */
-async function resolveTrack(label) {
-  if (state.cache[label]) return state.cache[label];
-  const [titlePart, artistPart] = label.split(" - ");
-  const term = encodeURIComponent(label.replace(" - ", " "));
-  const url = `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=1`;
-  let track;
-  try {
-    const res = await fetch(url);
-    const data = await res.json();
-    const r = data.results && data.results[0];
-    if (r) {
-      track = {
-        id: "it" + r.trackId, title: r.trackName, artist: r.artistName,
-        art: r.artworkUrl100 ? r.artworkUrl100.replace("100x100", "200x200") : "",
-        src: r.previewUrl || "", full: false, type: "song",
-        yt: `${r.trackName} ${r.artistName}`,
-      };
+/* Run several searches and merge unique tracks — used for the Mandarin list. */
+async function audiusSearchMany(queries, limit = 50) {
+  const seen = new Set();
+  const out = [];
+  for (const q of queries) {
+    const tracks = await audiusSearch(q, 12);
+    for (const t of tracks) {
+      if (!seen.has(t.id)) { seen.add(t.id); out.push(t); }
+      if (out.length >= limit) return out;
     }
-  } catch (e) {}
-  if (!track) {
-    track = {
-      id: "ph" + btoa(unescape(encodeURIComponent(label))).slice(0, 16),
-      title: titlePart || label, artist: artistPart || "Unknown artist",
-      art: "", src: "", full: false, type: "song", yt: label.replace(" - ", " "),
-    };
   }
-  state.cache[label] = track;
-  return track;
-}
-function itunesToTrack(r) {
-  return {
-    id: "it" + r.trackId, title: r.trackName, artist: r.artistName,
-    art: r.artworkUrl100 ? r.artworkUrl100.replace("100x100", "200x200") : "",
-    src: r.previewUrl || "", full: false, type: "song",
-    yt: `${r.trackName} ${r.artistName}`,
-  };
+  return out;
 }
 
 /* ---------- YouTube (full official song, opens in a new tab) ---------- */
@@ -204,12 +173,11 @@ function playTrack(track, queue, idx) {
   if (queue) { state.queue = queue; state.index = idx; }
   state.current = track;
   state.isLive = track.type === "station";
-
   const source = track.type === "station" ? track.url : track.src;
   if (!source) {
-    els.pTitle.textContent = track.title + " — no in-app audio (try ▶️ YouTube)";
+    els.pTitle.textContent = track.title + " — no audio (try ▶️ YouTube)";
     els.pArtist.textContent = track.artist;
-    updatePlayerChrome(track);
+    els.pYt.hidden = track.type !== "song";
     return;
   }
   audio.src = source;
@@ -219,20 +187,9 @@ function playTrack(track, queue, idx) {
   els.pTitle.textContent = track.title;
   els.pArtist.textContent = track.artist;
   els.playBtn.textContent = "⏸";
-  updatePlayerChrome(track);
+  els.pYt.hidden = track.type !== "song";
   refreshFavStates();
   markPlayingRows();
-}
-function updatePlayerChrome(track) {
-  if (track.type === "song") {
-    els.pBadge.hidden = false;
-    els.pBadge.textContent = track.full ? "FULL" : "0:30";
-    els.pBadge.className = "badge " + (track.full ? "full" : "prev");
-    els.pYt.hidden = false;
-  } else {
-    els.pBadge.hidden = true;
-    els.pYt.hidden = true;
-  }
 }
 function togglePlay() {
   if (!state.current) return;
@@ -258,8 +215,8 @@ function placeholderArt() {
 /* ---------- Views ---------- */
 const VIEW_TITLES = {
   home: "Home", live: "Live Radio",
-  english: "Top 50 English Songs", mandarin: "Top 50 Mandarin Songs",
-  free: "Free Full Songs", search: "Search Results",
+  english: "English Songs", mandarin: "Mandarin Songs",
+  search: "Search Results",
 };
 function setView(view, playlistId) {
   state.view = view;
@@ -277,9 +234,8 @@ function render() {
   switch (state.view) {
     case "home": return renderHome();
     case "live": return renderStations();
-    case "english": return renderChart(TOP_ENGLISH);
-    case "mandarin": return renderChart(TOP_MANDARIN);
-    case "free": return renderFree();
+    case "english": return renderSongs("english");
+    case "mandarin": return renderSongs("mandarin");
     case "playlist": return renderPlaylist();
   }
 }
@@ -287,15 +243,18 @@ function render() {
 function renderHome() {
   els.view.innerHTML = `
     <div class="hero-grid">
-      <div class="hero-card" data-go="free"><span class="hero-emoji">🎧</span><h3>Free Full Songs</h3><p>Unlimited full tracks, free &amp; legal (Audius).</p></div>
+      <div class="hero-card" data-go="english"><span class="hero-emoji">🇬🇧</span><h3>English Songs</h3><p>Full-length English tracks, free to play.</p></div>
+      <div class="hero-card" data-go="mandarin"><span class="hero-emoji">🇨🇳</span><h3>Mandarin Songs</h3><p>華語歌曲 — full songs, free to play.</p></div>
       <div class="hero-card" data-go="live"><span class="hero-emoji">📻</span><h3>Live Radio</h3><p>Stations playing right now, 24/7.</p></div>
-      <div class="hero-card" data-go="english"><span class="hero-emoji">🇬🇧</span><h3>Top 50 English</h3><p>The biggest English-language hits, ranked.</p></div>
-      <div class="hero-card" data-go="mandarin"><span class="hero-emoji">🇨🇳</span><h3>Top 50 Mandarin</h3><p>華語金曲 — the top 50 Mandarin tracks.</p></div>
+      <div class="hero-card" data-go="liked"><span class="hero-emoji">❤️</span><h3>Liked Songs</h3><p>Everything you've hearted, in one place.</p></div>
     </div>
     <h2 class="section-title">Featured stations</h2>
     <div id="home-stations" class="station-grid"></div>`;
   els.view.querySelectorAll("[data-go]").forEach((c) =>
-    c.addEventListener("click", () => setView(c.dataset.go)));
+    c.addEventListener("click", () => {
+      if (c.dataset.go === "liked") setView("playlist", LIKED_ID);
+      else setView(c.dataset.go);
+    }));
   renderStationGrid(document.getElementById("home-stations"), STATIONS.slice(0, 6));
 }
 
@@ -327,26 +286,19 @@ function renderStationGrid(container, stations) {
   });
 }
 
-async function renderChart(labels) {
-  els.view.innerHTML = `<div class="hint">Tap a row for a 30-sec preview, or use ▶️ for the full song on YouTube.</div><div class="loading">Loading the chart…</div>`;
-  const list = document.createElement("div");
-  list.className = "track-list";
-  els.view.querySelector(".loading").replaceWith(list);
-  const resolved = [];
-  for (let i = 0; i < labels.length; i++) {
-    const track = await resolveTrack(labels[i]);
-    resolved.push(track);
-    if (state.view !== "english" && state.view !== "mandarin") return;
-    list.appendChild(trackRow(track, i, resolved, { rank: true }));
+async function renderSongs(kind) {
+  const label = kind === "mandarin" ? "Mandarin" : "English";
+  els.view.innerHTML = `<div class="hint">Full songs, free &amp; legal via Audius. Tap any track to play it in full. ▶️ opens the official version on YouTube.</div><div class="loading">Loading ${label} full songs…</div>`;
+  let tracks = state.audiusCache[kind];
+  if (!tracks) {
+    tracks = kind === "mandarin"
+      ? await audiusSearchMany(MANDARIN_QUERIES, 50)
+      : await audiusTrending(50);
+    if (tracks.length) state.audiusCache[kind] = tracks;
   }
-}
-
-async function renderFree() {
-  els.view.innerHTML = `<div class="hint">Full songs streamed free &amp; legally from Audius. Use the search box up top to find any track.</div><div class="loading">Loading trending full songs…</div>`;
-  const tracks = await audiusTrending(40);
-  if (state.view !== "free") return;
+  if (state.view !== kind) return;
   if (!tracks.length) {
-    els.view.innerHTML = `<div class="empty">Couldn't reach Audius right now.<br>Check your connection and try again.</div>`;
+    els.view.innerHTML = `<div class="empty">Couldn't load ${label} songs right now.<br>Check your connection and try again.</div>`;
     return;
   }
   const list = document.createElement("div");
@@ -364,7 +316,6 @@ function trackRow(track, i, queue, opts = {}) {
   const lead = opts.reorder
     ? `<div class="drag-handle" title="Drag to reorder">⋮⋮</div>`
     : `<div class="track-rank">${opts.rank ? i + 1 : ""}</div>`;
-  const badge = `<span class="badge ${track.full ? "full" : "prev"}">${track.full ? "FULL" : "0:30"}</span>`;
   const removeBtn = opts.removable ? `<button class="icon-btn remove-btn" title="Remove">✕</button>` : "";
   row.innerHTML = `
     ${lead}
@@ -374,8 +325,7 @@ function trackRow(track, i, queue, opts = {}) {
       <div class="track-artist">${escapeHtml(track.artist)}</div>
     </div>
     <div class="track-actions">
-      ${badge}
-      <button class="icon-btn yt-btn" title="Watch full song on YouTube">▶️</button>
+      <button class="icon-btn yt-btn" title="Watch on YouTube">▶️</button>
       <button class="icon-btn add-btn" title="Add to playlist">＋</button>
       <button class="icon-btn fav-btn ${liked ? "fav" : ""}" title="Like">${liked ? "❤️" : "🤍"}</button>
       ${removeBtn}
@@ -505,40 +455,22 @@ function renderLibrary() {
   });
 }
 
-/* ---------- Search (Audius full songs + iTunes previews) ---------- */
+/* ---------- Search (Audius full songs) ---------- */
 async function runSearch(q) {
   if (!q.trim()) return;
   setView("search");
   els.view.innerHTML = `<div class="loading">Searching for “${escapeHtml(q)}”…</div>`;
-  let audius = [], itunes = [];
-  try {
-    [audius, itunes] = await Promise.all([
-      audiusSearch(q, 25),
-      fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=25`)
-        .then((r) => r.json()).then((d) => (d.results || []).map(itunesToTrack)).catch(() => []),
-    ]);
-  } catch {}
+  const tracks = await audiusSearch(q, 40);
   if (state.view !== "search") return;
-  if (!audius.length && !itunes.length) {
-    els.view.innerHTML = `<div class="empty">No results for “${escapeHtml(q)}” (or the network is blocked).</div>`;
+  if (!tracks.length) {
+    els.view.innerHTML = `<div class="empty">No full songs found for “${escapeHtml(q)}”.<br>Try the ▶️ button on a song, or search a different term.</div>`;
     return;
   }
+  const wrap = document.createElement("div");
+  wrap.className = "track-list";
   els.view.innerHTML = "";
-  if (audius.length) {
-    addSearchSection("🎧 Full songs (free, Audius)", audius);
-  }
-  if (itunes.length) {
-    addSearchSection("🍎 30-second previews (iTunes) — use ▶️ for full song on YouTube", itunes);
-  }
-}
-function addSearchSection(titleText, tracks) {
-  const h = document.createElement("h2");
-  h.className = "section-title"; h.textContent = titleText;
-  els.view.appendChild(h);
-  const list = document.createElement("div");
-  list.className = "track-list";
-  els.view.appendChild(list);
-  tracks.forEach((t, i) => list.appendChild(trackRow(t, i, tracks, {})));
+  els.view.appendChild(wrap);
+  tracks.forEach((t, i) => wrap.appendChild(trackRow(t, i, tracks, {})));
 }
 
 /* ---------- Helpers ---------- */

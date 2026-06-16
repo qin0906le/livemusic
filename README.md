@@ -6,16 +6,12 @@ no API keys.
 
 ## Features
 
-- **🎧 Free Full Songs** — full-length tracks streamed **free and legally** from
-  [Audius](https://audius.co) (no API key). Browse trending or search for anything.
+- **🇬🇧 English Songs** & **🇨🇳 Mandarin Songs** — **full-length** tracks, streamed **free and
+  legally** from [Audius](https://audius.co) (no API key). Every track plays end to end — no previews.
 - **📻 Live Radio** — streams real public internet radio in the browser, 24/7. Stations are grouped
   into **Chill & Eclectic** (SomaFM) and **Mandarin & Asian** pop.
-- **🇬🇧 Top 50 English** & **🇨🇳 Top 50 Mandarin** — curated charts. Each track is resolved to
-  album art and a **30-second preview** via the free iTunes Search API (no key required).
-- **▶️ Watch on YouTube** — every song has a button that opens the full official track on YouTube.
-- **🏷 FULL / 0:30 badges** — every song shows whether in-app playback is the full song
-  (Audius / live radio) or a 30-second preview (iTunes).
-- **🔍 Search** — searches Audius (full songs) **and** iTunes (previews) together.
+- **▶️ Watch on YouTube** — every song has a button that opens the official version on YouTube.
+- **🔍 Search** — searches Audius for full songs you can play right away.
 - **❤️ Multiple playlists** — a built-in **Liked Songs** plus any number of custom playlists you
   create. Use ＋ on a song to add it to one (or several), **drag to reorder**, rename, or delete.
   Everything is stored in your browser (`localStorage`) and survives reloads.
@@ -61,11 +57,11 @@ https://<your-username>.github.io/livemusic/
 
 ## Notes
 
-- **Full songs:** the **Free Full Songs** section and search results badged **FULL** play
-  complete tracks via Audius (free, legal, no key) — its catalog leans toward independent
-  artists. **Live Radio** is also full, continuous audio.
-- **Mainstream Top 50 hits** are owned by major labels, so in-app they play as **30-second
-  previews** (iTunes). Use the **▶️ YouTube** button on any song to hear the full official track —
-  the legal, free way to stream label-owned music.
-- Everything network-dependent (Audius, previews, radio, YouTube) needs internet access. If a
-  source is blocked, songs still list with title/artist; that source simply won't play.
+- **All songs play full-length** via Audius (free, legal, no key). Audius's catalog leans toward
+  **independent artists**, so the English/Mandarin lists are full free tracks rather than a
+  major-label "Top 40". The **Mandarin** list is built by merging several Chinese/Mandarin
+  search terms, so its size depends on Audius's catalog.
+- For a specific **major-label hit** that isn't on Audius, use the **▶️ YouTube** button on any
+  song to open the official version — the legal, free way to stream label-owned music.
+- Everything is network-dependent (Audius, radio, YouTube). If a source is blocked, the list
+  simply won't load.
