@@ -280,7 +280,7 @@ setInterval(() => {
 
 /* ---------- Views ---------- */
 const VIEW_TITLES = {
-  home: "Home", live: "Live Radio",
+  home: "Home",
   english: "Top 50 English Songs", mandarin: "Top 50 Mandarin Songs",
   search: "Search Results",
 };
@@ -299,7 +299,6 @@ function render() {
   closeAddMenu();
   switch (state.view) {
     case "home": return renderHome();
-    case "live": return renderStations();
     case "english": return renderChart(TOP_ENGLISH);
     case "mandarin": return renderChart(TOP_MANDARIN);
     case "playlist": return renderPlaylist();
@@ -311,45 +310,13 @@ function renderHome() {
     <div class="hero-grid">
       <div class="hero-card" data-go="english"><span class="hero-emoji">🇬🇧</span><h3>Top 50 English</h3><p>The biggest English hits — full songs.</p></div>
       <div class="hero-card" data-go="mandarin"><span class="hero-emoji">🇨🇳</span><h3>Top 50 Mandarin</h3><p>華語金曲 — the top 50, full songs.</p></div>
-      <div class="hero-card" data-go="live"><span class="hero-emoji">📻</span><h3>Live Radio</h3><p>Stations playing right now, 24/7.</p></div>
       <div class="hero-card" data-go="liked"><span class="hero-emoji">❤️</span><h3>Liked Songs</h3><p>Everything you've hearted, in one place.</p></div>
-    </div>
-    <h2 class="section-title">Featured stations</h2>
-    <div id="home-stations" class="station-grid"></div>`;
+    </div>`;
   els.view.querySelectorAll("[data-go]").forEach((c) =>
     c.addEventListener("click", () => {
       if (c.dataset.go === "liked") setView("playlist", LIKED_ID);
       else setView(c.dataset.go);
     }));
-  renderStationGrid(document.getElementById("home-stations"), STATIONS.slice(0, 6));
-}
-
-function renderStations() {
-  els.view.innerHTML = "";
-  [...new Set(STATIONS.map((s) => s.group))].forEach((g) => {
-    const h = document.createElement("h2");
-    h.className = "section-title"; h.textContent = g;
-    els.view.appendChild(h);
-    const grid = document.createElement("div");
-    grid.className = "station-grid";
-    els.view.appendChild(grid);
-    renderStationGrid(grid, STATIONS.filter((s) => s.group === g));
-  });
-  const note = document.createElement("p");
-  note.className = "muted-note";
-  note.textContent = "Mandarin & Asian stations are public community streams and may occasionally change URLs.";
-  els.view.appendChild(note);
-}
-function renderStationGrid(container, stations) {
-  container.innerHTML = "";
-  stations.forEach((s) => {
-    const track = { id: "st" + s.name, title: s.name, artist: s.genre, art: "", type: "station", engine: "audio", url: s.url };
-    const card = document.createElement("div");
-    card.className = "station-card" + (state.current && state.current.id === track.id ? " playing" : "");
-    card.innerHTML = `<div class="station-emoji">${s.emoji}</div><div class="station-name">${escapeHtml(s.name)}</div><div class="station-genre">${escapeHtml(s.genre)}</div>`;
-    card.addEventListener("click", () => { playTrack(track); render(); });
-    container.appendChild(card);
-  });
 }
 
 function renderChart(list) {
