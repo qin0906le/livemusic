@@ -6,12 +6,15 @@ no API keys.
 
 ## Features
 
-- **📻 Live Radio** — streams real public internet radio stations (SomaFM) right in the browser, 24/7.
+- **📻 Live Radio** — streams real public internet radio in the browser, 24/7. Stations are grouped
+  into **Chill & Eclectic** (SomaFM) and **Mandarin & Asian** pop.
 - **🇬🇧 Top 50 English** & **🇨🇳 Top 50 Mandarin** — curated charts. Each track is resolved to
   album art and a **30-second preview** via the free iTunes Search API (no key required).
 - **🔍 Search** — find any song or artist and play its preview.
-- **❤️ Playlist** — tap the heart on any song to save it; your playlist is stored in your
-  browser (`localStorage`) and survives reloads.
+- **❤️ Multiple playlists** — a built-in **Liked Songs** plus any number of custom playlists you
+  create. Use ＋ on a song to add it to one (or several), **drag to reorder**, rename, or delete.
+  Everything is stored in your browser (`localStorage`) and survives reloads.
+- **🌙 Light / dark theme** — toggle in the top bar; your choice is remembered.
 - **🎚 Player bar** — play/pause, next/previous, seek, and volume. Live stations show a `● LIVE` badge.
 
 ## Run it
@@ -25,6 +28,21 @@ open index.html        # macOS  (use "start" on Windows, "xdg-open" on Linux)
 # option 2: any static server (recommended, avoids browser file:// quirks)
 python3 -m http.server 8000
 # then visit http://localhost:8000
+```
+
+## Publishing (live URL)
+
+This repo ships a GitHub Actions workflow (`.github/workflows/pages.yml`) that deploys the site
+to **GitHub Pages** on every push. To turn it on once:
+
+1. Go to the repo on GitHub → **Settings → Pages**.
+2. Under **Build and deployment → Source**, choose **GitHub Actions**.
+
+The workflow then publishes automatically. The live URL appears in the workflow run summary and at
+**Settings → Pages**, typically:
+
+```
+https://<your-username>.github.io/livemusic/
 ```
 
 ## How it works
