@@ -1,9 +1,9 @@
 /* LiveTunes — app logic
-   Two playback engines, routed per track:
-     • "yt"    — Top 50 English/Mandarin hits via the embedded YouTube player
-     • "audio" — live radio + Audius search results via <audio>
-   A wrong/blocked YouTube id auto-falls back to opening a YouTube search.
-   Multiple playlists + light/dark theme persist in localStorage. */
+   Every song plays FULL-LENGTH and free via Audius (no API key, no previews),
+   on the HTML5 <audio> engine — so playback continues when the phone is locked
+   / backgrounded, with lock-screen controls + auto-advance (Media Session API).
+   A ▶️ button opens the official version on YouTube. Multiple playlists +
+   light/dark theme persist in localStorage. */
 
 const audio = document.getElementById("audio");
 const els = {
@@ -15,8 +15,6 @@ const els = {
   newPlaylistBtn: document.getElementById("new-playlist-btn"),
   libraryList: document.getElementById("library-list"),
   addMenu: document.getElementById("add-menu"),
-  ytHost: document.getElementById("yt-host"),
-  ytClose: document.getElementById("yt-close"),
   art: document.getElementById("player-art"),
   pTitle: document.getElementById("player-title"),
   pArtist: document.getElementById("player-artist"),
@@ -29,7 +27,6 @@ const els = {
   timeCur: document.getElementById("time-current"),
   timeTot: document.getElementById("time-total"),
   volume: document.getElementById("volume"),
-  liveBadge: document.getElementById("live-badge"),
 };
 
 const state = {
@@ -37,8 +34,6 @@ const state = {
   openPlaylist: null,
   queue: [],
   index: -1,
-  isLive: false,
-  engine: "audio", // "audio" | "yt"
   current: null,
   audiusCache: {},
 };
@@ -113,34 +108,7 @@ function toggleTheme() {
   saveStore(data); applyTheme(data.theme);
 }
 
-/* ---------- YouTube IFrame player ---------- */
-let ytPlayer = null, ytReady = false, pendingYt = null;
-window.onYouTubeIframeAPIReady = function () {
-  ytPlayer = new YT.Player("yt-player", {
-    width: "300", height: "169",
-    playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
-    events: {
-      onReady: () => { ytReady = true; if (pendingYt) { ytPlayer.loadVideoById(pendingYt); pendingYt = null; } },
-      onStateChange: (e) => {
-        if (e.data === YT.PlayerState.PLAYING) els.playBtn.textContent = "⏸";
-        else if (e.data === YT.PlayerState.PAUSED) els.playBtn.textContent = "▶";
-        else if (e.data === YT.PlayerState.ENDED) playNext();
-      },
-      onError: () => { // bad/blocked id → open the correct search instead
-        if (state.current) openYouTube(state.current.ytSearch || `${state.current.title} ${state.current.artist}`);
-      },
-    },
-  });
-};
-(function loadYT() {
-  const tag = document.createElement("script");
-  tag.src = "https://www.youtube.com/iframe_api";
-  document.head.appendChild(tag);
-})();
-function showYtHost(show) { els.ytHost.hidden = !show; }
-function pauseYt() { if (ytReady && ytPlayer.pauseVideo) ytPlayer.pauseVideo(); }
-
-/* ---------- Audius (free full songs for search) ---------- */
+/* ---------- Audius (free full songs, no API key) ---------- */
 let audiusHost = null;
 async function getAudiusHost() {
   if (audiusHost) return audiusHost;
@@ -152,30 +120,46 @@ async function getAudiusHost() {
   } catch { audiusHost = null; }
   return audiusHost;
 }
+function audiusToTrack(t, host) {
+  return {
+    id: "au" + t.id,
+    title: t.title,
+    artist: (t.user && t.user.name) || "Unknown artist",
+    art: (t.artwork && (t.artwork["480x480"] || t.artwork["150x150"])) || "",
+    src: `${host}/v1/tracks/${t.id}/stream?app_name=LiveTunes`,
+    type: "song",
+    ytSearch: `${t.title} ${(t.user && t.user.name) || ""}`,
+  };
+}
 async function audiusSearch(query, limit = 40) {
   const host = await getAudiusHost();
   if (!host) return [];
   try {
     const res = await fetch(`${host}/v1/tracks/search?query=${encodeURIComponent(query)}&app_name=LiveTunes`);
     const data = await res.json();
-    return (data.data || []).filter((t) => t.is_streamable !== false).slice(0, limit).map((t) => ({
-      id: "au" + t.id, title: t.title, artist: (t.user && t.user.name) || "Unknown artist",
-      art: (t.artwork && (t.artwork["480x480"] || t.artwork["150x150"])) || "",
-      src: `${host}/v1/tracks/${t.id}/stream?app_name=LiveTunes`, engine: "audio", type: "song",
-      ytSearch: `${t.title} ${(t.user && t.user.name) || ""}`,
-    }));
+    return (data.data || []).filter((t) => t.is_streamable !== false).slice(0, limit).map((t) => audiusToTrack(t, host));
   } catch { return []; }
 }
-
-/* ---------- Curated chart tracks ---------- */
-function chartTrack(item) {
-  return {
-    id: "yt" + (item.y || item.t),
-    title: item.t, artist: item.a,
-    ytId: item.y || "", engine: "yt", type: "song",
-    art: item.y ? `https://i.ytimg.com/vi/${item.y}/mqdefault.jpg` : "",
-    ytSearch: `${item.t} ${item.a}`,
-  };
+async function audiusTrending(limit = 50) {
+  const host = await getAudiusHost();
+  if (!host) return [];
+  try {
+    const res = await fetch(`${host}/v1/tracks/trending?app_name=LiveTunes`);
+    const data = await res.json();
+    return (data.data || []).slice(0, limit).map((t) => audiusToTrack(t, host));
+  } catch { return []; }
+}
+async function audiusSearchMany(queries, limit = 50) {
+  const seen = new Set();
+  const out = [];
+  for (const q of queries) {
+    const tracks = await audiusSearch(q, 12);
+    for (const t of tracks) {
+      if (!seen.has(t.id)) { seen.add(t.id); out.push(t); }
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
 }
 
 /* ---------- YouTube search link ---------- */
@@ -183,49 +167,7 @@ function openYouTube(query) {
   window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(query), "_blank", "noopener");
 }
 
-/* ---------- Playback ---------- */
-function playTrack(track, queue, idx) {
-  if (queue) { state.queue = queue; state.index = idx; }
-  state.current = track;
-  state.isLive = track.type === "station";
-
-  if (track.engine === "yt") {
-    state.engine = "yt";
-    audio.pause();
-    setPlayerInfo(track);
-    if (!track.ytId) {            // no embedded id → open correct search
-      openYouTube(track.ytSearch);
-      showYtHost(false);
-      els.playBtn.textContent = "▶";
-    } else {
-      showYtHost(true);
-      if (ytReady) ytPlayer.loadVideoById(track.ytId);
-      else pendingYt = track.ytId;
-    }
-    refreshFavStates(); markPlayingRows();
-    return;
-  }
-
-  // audio engine (radio + Audius)
-  state.engine = "audio";
-  pauseYt(); showYtHost(false);
-  const source = track.type === "station" ? track.url : track.src;
-  if (!source) { setPlayerInfo(track); return; }
-  audio.src = source;
-  els.liveBadge.hidden = !state.isLive;
-  audio.play().catch(() => {});
-  setPlayerInfo(track);
-  els.playBtn.textContent = "⏸";
-  refreshFavStates(); markPlayingRows();
-}
-function setPlayerInfo(track) {
-  els.art.src = track.art || placeholderArt();
-  els.pTitle.textContent = track.title;
-  els.pArtist.textContent = track.artist;
-  els.pYt.hidden = track.type !== "song";
-  updateMediaSession(track);
-}
-/* Lock-screen / background metadata + controls (works for the <audio> engine). */
+/* ---------- Media Session (lock-screen / background) ---------- */
 function updateMediaSession(track) {
   if (!("mediaSession" in navigator)) return;
   try {
@@ -243,24 +185,38 @@ function updateMediaSession(track) {
 function setMediaPlaybackState(s) {
   if ("mediaSession" in navigator) navigator.mediaSession.playbackState = s;
 }
+
+/* ---------- Playback ---------- */
+function playTrack(track, queue, idx) {
+  if (queue) { state.queue = queue; state.index = idx; }
+  state.current = track;
+  if (!track.src) { setPlayerInfo(track); return; }
+  audio.src = track.src;
+  audio.play().catch(() => {});
+  setPlayerInfo(track);
+  els.playBtn.textContent = "⏸";
+  refreshFavStates();
+  markPlayingRows();
+}
+function setPlayerInfo(track) {
+  els.art.src = track.art || placeholderArt();
+  els.pTitle.textContent = track.title;
+  els.pArtist.textContent = track.artist;
+  els.pYt.hidden = false;
+  updateMediaSession(track);
+}
 function togglePlay() {
   if (!state.current) return;
-  if (state.engine === "yt") {
-    if (!ytReady) return;
-    if (ytPlayer.getPlayerState() === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
-    else ytPlayer.playVideo();
-    return;
-  }
   if (audio.paused) { audio.play(); els.playBtn.textContent = "⏸"; }
   else { audio.pause(); els.playBtn.textContent = "▶"; }
 }
 function playNext() {
-  if (state.isLive || !state.queue.length) return;
+  if (!state.queue.length) return;
   const n = (state.index + 1) % state.queue.length;
   playTrack(state.queue[n], state.queue, n);
 }
 function playPrev() {
-  if (state.isLive || !state.queue.length) return;
+  if (!state.queue.length) return;
   const p = (state.index - 1 + state.queue.length) % state.queue.length;
   playTrack(state.queue[p], state.queue, p);
 }
@@ -269,19 +225,11 @@ function placeholderArt() {
     '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#18213a"/><text x="50%" y="54%" font-size="34" text-anchor="middle" dominant-baseline="middle">🎵</text></svg>'
   );
 }
-/* Poll the YouTube player for progress (it has no timeupdate event). */
-setInterval(() => {
-  if (state.engine !== "yt" || !ytReady || !ytPlayer.getDuration) return;
-  const cur = ytPlayer.getCurrentTime() || 0, dur = ytPlayer.getDuration() || 0;
-  els.timeCur.textContent = fmtTime(cur);
-  els.timeTot.textContent = fmtTime(dur);
-  if (!seeking) els.seek.value = dur ? (cur / dur) * 100 : 0;
-}, 300);
 
 /* ---------- Views ---------- */
 const VIEW_TITLES = {
   home: "Home",
-  english: "Top 50 English Songs", mandarin: "Top 50 Mandarin Songs",
+  english: "English Songs", mandarin: "Mandarin Songs",
   search: "Search Results",
 };
 function setView(view, playlistId) {
@@ -299,8 +247,8 @@ function render() {
   closeAddMenu();
   switch (state.view) {
     case "home": return renderHome();
-    case "english": return renderChart(TOP_ENGLISH);
-    case "mandarin": return renderChart(TOP_MANDARIN);
+    case "english": return renderSongs("english");
+    case "mandarin": return renderSongs("mandarin");
     case "playlist": return renderPlaylist();
   }
 }
@@ -308,10 +256,11 @@ function render() {
 function renderHome() {
   els.view.innerHTML = `
     <div class="hero-grid">
-      <div class="hero-card" data-go="english"><span class="hero-emoji">🇬🇧</span><h3>Top 50 English</h3><p>The biggest English hits — full songs.</p></div>
-      <div class="hero-card" data-go="mandarin"><span class="hero-emoji">🇨🇳</span><h3>Top 50 Mandarin</h3><p>華語金曲 — the top 50, full songs.</p></div>
+      <div class="hero-card" data-go="english"><span class="hero-emoji">🇬🇧</span><h3>English Songs</h3><p>Full-length English tracks, free to play.</p></div>
+      <div class="hero-card" data-go="mandarin"><span class="hero-emoji">🇨🇳</span><h3>Mandarin Songs</h3><p>華語歌曲 — full songs, free to play.</p></div>
       <div class="hero-card" data-go="liked"><span class="hero-emoji">❤️</span><h3>Liked Songs</h3><p>Everything you've hearted, in one place.</p></div>
-    </div>`;
+    </div>
+    <p class="muted-note">All songs play full-length and keep playing when your phone is locked.</p>`;
   els.view.querySelectorAll("[data-go]").forEach((c) =>
     c.addEventListener("click", () => {
       if (c.dataset.go === "liked") setView("playlist", LIKED_ID);
@@ -319,13 +268,25 @@ function renderHome() {
     }));
 }
 
-function renderChart(list) {
-  const tracks = list.map(chartTrack);
-  els.view.innerHTML = `<div class="hint">Tap a song to play the full track in the YouTube player. ▶️ opens it on YouTube directly.</div>`;
-  const wrap = document.createElement("div");
-  wrap.className = "track-list";
-  els.view.appendChild(wrap);
-  tracks.forEach((t, i) => wrap.appendChild(trackRow(t, i, tracks, { rank: true })));
+async function renderSongs(kind) {
+  const label = kind === "mandarin" ? "Mandarin" : "English";
+  els.view.innerHTML = `<div class="hint">Full songs, free &amp; legal via Audius. Plays in full and keeps going when locked. ▶️ opens the official version on YouTube.</div><div class="loading">Loading ${label} songs…</div>`;
+  let tracks = state.audiusCache[kind];
+  if (!tracks) {
+    tracks = kind === "mandarin"
+      ? await audiusSearchMany(MANDARIN_QUERIES, 50)
+      : await audiusTrending(50);
+    if (tracks.length) state.audiusCache[kind] = tracks;
+  }
+  if (state.view !== kind) return;
+  if (!tracks.length) {
+    els.view.innerHTML = `<div class="empty">Couldn't load ${label} songs right now.<br>Check your connection and try again.</div>`;
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "track-list";
+  els.view.querySelector(".loading").replaceWith(list);
+  tracks.forEach((t, i) => list.appendChild(trackRow(t, i, tracks, { rank: true })));
 }
 
 function trackRow(track, i, queue, opts = {}) {
@@ -480,17 +441,17 @@ function renderLibrary() {
 async function runSearch(q) {
   if (!q.trim()) return;
   setView("search");
-  els.view.innerHTML = `<div class="hint">Full songs from Audius. For a specific chart hit, use the ▶️ button to open it on YouTube.</div><div class="loading">Searching for “${escapeHtml(q)}”…</div>`;
+  els.view.innerHTML = `<div class="loading">Searching for “${escapeHtml(q)}”…</div>`;
   const tracks = await audiusSearch(q, 40);
   if (state.view !== "search") return;
-  const loader = els.view.querySelector(".loading");
   if (!tracks.length) {
-    loader.outerHTML = `<div class="empty">No full songs found for “${escapeHtml(q)}”.<br>Tip: open it on YouTube via the ▶️ button on any chart song.</div>`;
+    els.view.innerHTML = `<div class="empty">No full songs found for “${escapeHtml(q)}”.<br>Try a different term, or use the ▶️ button on a song to open YouTube.</div>`;
     return;
   }
   const wrap = document.createElement("div");
   wrap.className = "track-list";
-  loader.replaceWith(wrap);
+  els.view.innerHTML = "";
+  els.view.appendChild(wrap);
   tracks.forEach((t, i) => wrap.appendChild(trackRow(t, i, tracks, {})));
 }
 
@@ -530,52 +491,40 @@ els.prevBtn.addEventListener("click", playPrev);
 els.fav.addEventListener("click", () => { if (state.current && state.current.type === "song") toggleLiked(state.current); });
 els.pYt.addEventListener("click", () => { if (state.current) openYouTube(state.current.ytSearch || `${state.current.title} ${state.current.artist}`); });
 els.themeBtn.addEventListener("click", toggleTheme);
-els.ytClose.addEventListener("click", () => showYtHost(false));
 els.newPlaylistBtn.addEventListener("click", () => {
   const name = prompt("New playlist name");
   if (name && name.trim()) { const id = createPlaylist(name.trim()); setView("playlist", id); }
 });
 
-els.volume.addEventListener("input", () => {
-  const v = els.volume.value;
-  audio.volume = v / 100;
-  if (ytReady && ytPlayer.setVolume) ytPlayer.setVolume(+v);
-});
+els.volume.addEventListener("input", () => { audio.volume = els.volume.value / 100; });
 audio.volume = els.volume.value / 100;
 
 let seeking = false;
 els.seek.addEventListener("input", () => { seeking = true; });
 els.seek.addEventListener("change", () => {
   seeking = false;
-  if (state.engine === "yt") {
-    if (ytReady) { const dur = ytPlayer.getDuration() || 0; ytPlayer.seekTo((els.seek.value / 100) * dur, true); }
-    return;
-  }
-  if (state.isLive || !audio.duration) return;
-  audio.currentTime = (els.seek.value / 100) * audio.duration;
+  if (audio.duration) audio.currentTime = (els.seek.value / 100) * audio.duration;
 });
 
 audio.addEventListener("timeupdate", () => {
-  if (state.engine !== "audio") return;
-  if (state.isLive) { els.timeCur.textContent = "LIVE"; els.timeTot.textContent = ""; els.seek.value = 0; return; }
   els.timeCur.textContent = fmtTime(audio.currentTime);
   els.timeTot.textContent = fmtTime(audio.duration);
   if (!seeking) els.seek.value = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
 });
-audio.addEventListener("ended", () => { if (state.engine === "audio") playNext(); });
-audio.addEventListener("play", () => { if (state.engine === "audio") { els.playBtn.textContent = "⏸"; setMediaPlaybackState("playing"); } });
-audio.addEventListener("pause", () => { if (state.engine === "audio") { els.playBtn.textContent = "▶"; setMediaPlaybackState("paused"); } });
+audio.addEventListener("ended", playNext);
+audio.addEventListener("play", () => { els.playBtn.textContent = "⏸"; setMediaPlaybackState("playing"); });
+audio.addEventListener("pause", () => { els.playBtn.textContent = "▶"; setMediaPlaybackState("paused"); });
 
 /* Lock-screen / headset / notification controls for background audio. */
 if ("mediaSession" in navigator) {
   const ms = navigator.mediaSession;
-  ms.setActionHandler("play", () => { if (state.engine === "audio") audio.play(); else togglePlay(); });
-  ms.setActionHandler("pause", () => { if (state.engine === "audio") audio.pause(); else togglePlay(); });
+  ms.setActionHandler("play", () => audio.play());
+  ms.setActionHandler("pause", () => audio.pause());
   ms.setActionHandler("previoustrack", () => playPrev());
   ms.setActionHandler("nexttrack", () => playNext());
   try {
     ms.setActionHandler("seekto", (e) => {
-      if (state.engine === "audio" && audio.duration && e.seekTime != null) audio.currentTime = e.seekTime;
+      if (audio.duration && e.seekTime != null) audio.currentTime = e.seekTime;
     });
   } catch {}
 }

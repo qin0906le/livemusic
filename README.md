@@ -6,11 +6,11 @@ no API keys.
 
 ## Features
 
-- **🇬🇧 Top 50 English** & **🇨🇳 Top 50 Mandarin** — curated **hit lists** that play **full songs**
-  through an **embedded YouTube player** (no API key). A wrong/blocked video id auto-falls back to
-  opening the correct YouTube search.
+- **🇬🇧 English Songs** & **🇨🇳 Mandarin Songs** — **full-length** tracks streamed **free and
+  legally** from [Audius](https://audius.co) (no API key) on the HTML5 `<audio>` engine, so they
+  keep playing when your phone is locked.
 - **▶️ Open on YouTube** — every song has a button that opens the official version on YouTube.
-- **🔍 Search** — searches [Audius](https://audius.co) for free full songs you can play right away.
+- **🔍 Search** — searches Audius for free full songs you can play right away.
 - **❤️ Multiple playlists** — a built-in **Liked Songs** plus any number of custom playlists you
   create. Use ＋ on a song to add it to one (or several), **drag to reorder**, rename, or delete.
   Everything is stored in your browser (`localStorage`) and survives reloads.
@@ -65,9 +65,8 @@ https://<your-username>.github.io/livemusic/
 
 ## Background / lock-screen playback
 
-- **Audius search results** use the HTML5 `<audio>` engine, so they keep playing when the phone is
-  **locked or the browser is backgrounded**, show **lock-screen controls** (play/pause, next/previous)
-  via the Media Session API, and **auto-advance** to the next track.
-- The **Top 50 (YouTube) songs cannot play while locked** — Safari and YouTube block background audio
-  for embedded players on mobile. That restriction can't be bypassed from a website; it requires a
-  native app or YouTube Premium.
+- **All songs** (English, Mandarin, Search) play on the HTML5 `<audio>` engine, so they keep playing
+  when the phone is **locked or the browser is backgrounded**, show **lock-screen controls**
+  (play/pause, next/previous) via the Media Session API, and **auto-advance** to the next track.
+- The **▶️ button** opens a song's official version on YouTube in a new tab (for reference / the
+  exact major-label recording).
