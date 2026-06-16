@@ -1,8 +1,10 @@
 /* LiveTunes — app logic
-   - Resolves songs to playable 30s previews via the iTunes Search API
-   - Streams live internet radio (grouped stations)
-   - Multiple named playlists + a default "Liked Songs", persisted in localStorage
-   - Light/dark theme, drag-to-reorder within a playlist */
+   Playback sources, in order of "fullness":
+     • Live radio (continuous, full)            — STATIONS
+     • Audius full songs (free, no key)         — api.audius.co
+     • iTunes 30-second previews (fallback)     — itunes.apple.com
+   Plus a "Watch on YouTube" button on every song for the full official track.
+   Multiple playlists + light/dark theme are persisted in localStorage. */
 
 const audio = document.getElementById("audio");
 const els = {
@@ -14,10 +16,11 @@ const els = {
   newPlaylistBtn: document.getElementById("new-playlist-btn"),
   libraryList: document.getElementById("library-list"),
   addMenu: document.getElementById("add-menu"),
-  // player
   art: document.getElementById("player-art"),
   pTitle: document.getElementById("player-title"),
   pArtist: document.getElementById("player-artist"),
+  pBadge: document.getElementById("player-badge"),
+  pYt: document.getElementById("player-yt"),
   fav: document.getElementById("player-fav"),
   playBtn: document.getElementById("play-btn"),
   prevBtn: document.getElementById("prev-btn"),
@@ -31,7 +34,7 @@ const els = {
 
 const state = {
   view: "home",
-  openPlaylist: null, // id of playlist being viewed
+  openPlaylist: null,
   queue: [],
   index: -1,
   isLive: false,
@@ -42,7 +45,6 @@ const state = {
 /* ---------- Persistent store ---------- */
 const STORE_KEY = "livetunes_v2";
 const LIKED_ID = "liked";
-
 function loadStore() {
   let data;
   try { data = JSON.parse(localStorage.getItem(STORE_KEY)); } catch { data = null; }
@@ -54,16 +56,13 @@ function loadStore() {
   return data;
 }
 function saveStore(data) { localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
-
 function getPlaylists() { return loadStore().playlists; }
 function getPlaylist(id) { return getPlaylists().find((p) => p.id === id); }
-
 function createPlaylist(name) {
   const data = loadStore();
   const id = "pl" + Date.now().toString(36);
   data.playlists.push({ id, name: name || "New Playlist", tracks: [] });
-  saveStore(data);
-  return id;
+  saveStore(data); return id;
 }
 function deletePlaylist(id) {
   if (id === LIKED_ID) return;
@@ -98,11 +97,9 @@ function inLiked(track) { return (getPlaylist(LIKED_ID)?.tracks || []).some((t) 
 function toggleLiked(track) {
   if (inLiked(track)) removeFromPlaylist(LIKED_ID, track.id);
   else addToPlaylist(LIKED_ID, track);
-  refreshFavStates();
-  renderLibrary();
+  refreshFavStates(); renderLibrary();
   if (state.view === "playlist") render();
 }
-function inAnyPlaylist(track) { return getPlaylists().some((p) => p.tracks.some((t) => t.id === track.id)); }
 
 /* ---------- Theme ---------- */
 function applyTheme(theme) {
@@ -112,8 +109,50 @@ function applyTheme(theme) {
 function toggleTheme() {
   const data = loadStore();
   data.theme = data.theme === "light" ? "dark" : "light";
-  saveStore(data);
-  applyTheme(data.theme);
+  saveStore(data); applyTheme(data.theme);
+}
+
+/* ---------- Audius (free full songs, no API key) ---------- */
+let audiusHost = null;
+async function getAudiusHost() {
+  if (audiusHost) return audiusHost;
+  try {
+    const res = await fetch("https://api.audius.co");
+    const data = await res.json();
+    const hosts = data.data || [];
+    audiusHost = hosts[Math.floor(Math.random() * hosts.length)] || null;
+  } catch { audiusHost = null; }
+  return audiusHost;
+}
+function audiusToTrack(t, host) {
+  return {
+    id: "au" + t.id,
+    title: t.title,
+    artist: (t.user && t.user.name) || "Unknown artist",
+    art: (t.artwork && (t.artwork["480x480"] || t.artwork["150x150"])) || "",
+    src: `${host}/v1/tracks/${t.id}/stream?app_name=LiveTunes`,
+    full: true,
+    type: "song",
+    yt: `${t.title} ${(t.user && t.user.name) || ""}`,
+  };
+}
+async function audiusSearch(query, limit = 25) {
+  const host = await getAudiusHost();
+  if (!host) return [];
+  try {
+    const res = await fetch(`${host}/v1/tracks/search?query=${encodeURIComponent(query)}&app_name=LiveTunes`);
+    const data = await res.json();
+    return (data.data || []).filter((t) => t.is_streamable !== false).slice(0, limit).map((t) => audiusToTrack(t, host));
+  } catch { return []; }
+}
+async function audiusTrending(limit = 40) {
+  const host = await getAudiusHost();
+  if (!host) return [];
+  try {
+    const res = await fetch(`${host}/v1/tracks/trending?app_name=LiveTunes`);
+    const data = await res.json();
+    return (data.data || []).slice(0, limit).map((t) => audiusToTrack(t, host));
+  } catch { return []; }
 }
 
 /* ---------- iTunes preview resolver ---------- */
@@ -129,26 +168,35 @@ async function resolveTrack(label) {
     const r = data.results && data.results[0];
     if (r) {
       track = {
-        id: "it" + r.trackId,
-        title: r.trackName,
-        artist: r.artistName,
+        id: "it" + r.trackId, title: r.trackName, artist: r.artistName,
         art: r.artworkUrl100 ? r.artworkUrl100.replace("100x100", "200x200") : "",
-        preview: r.previewUrl || "",
-        type: "song",
+        src: r.previewUrl || "", full: false, type: "song",
+        yt: `${r.trackName} ${r.artistName}`,
       };
     }
-  } catch (e) { /* offline / blocked */ }
-
+  } catch (e) {}
   if (!track) {
     track = {
       id: "ph" + btoa(unescape(encodeURIComponent(label))).slice(0, 16),
-      title: titlePart || label,
-      artist: artistPart || "Unknown artist",
-      art: "", preview: "", type: "song",
+      title: titlePart || label, artist: artistPart || "Unknown artist",
+      art: "", src: "", full: false, type: "song", yt: label.replace(" - ", " "),
     };
   }
   state.cache[label] = track;
   return track;
+}
+function itunesToTrack(r) {
+  return {
+    id: "it" + r.trackId, title: r.trackName, artist: r.artistName,
+    art: r.artworkUrl100 ? r.artworkUrl100.replace("100x100", "200x200") : "",
+    src: r.previewUrl || "", full: false, type: "song",
+    yt: `${r.trackName} ${r.artistName}`,
+  };
+}
+
+/* ---------- YouTube (full official song, opens in a new tab) ---------- */
+function openYouTube(query) {
+  window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(query), "_blank", "noopener");
 }
 
 /* ---------- Playback ---------- */
@@ -157,26 +205,34 @@ function playTrack(track, queue, idx) {
   state.current = track;
   state.isLive = track.type === "station";
 
-  if (track.type === "station") {
-    audio.src = track.url;
-    els.liveBadge.hidden = false;
-  } else {
-    if (!track.preview) {
-      els.pTitle.textContent = track.title + " (preview unavailable)";
-      els.pArtist.textContent = track.artist;
-      return;
-    }
-    audio.src = track.preview;
-    els.liveBadge.hidden = true;
+  const source = track.type === "station" ? track.url : track.src;
+  if (!source) {
+    els.pTitle.textContent = track.title + " — no in-app audio (try ▶️ YouTube)";
+    els.pArtist.textContent = track.artist;
+    updatePlayerChrome(track);
+    return;
   }
-
+  audio.src = source;
+  els.liveBadge.hidden = !state.isLive;
   audio.play().catch(() => {});
   els.art.src = track.art || placeholderArt();
   els.pTitle.textContent = track.title;
   els.pArtist.textContent = track.artist;
   els.playBtn.textContent = "⏸";
+  updatePlayerChrome(track);
   refreshFavStates();
   markPlayingRows();
+}
+function updatePlayerChrome(track) {
+  if (track.type === "song") {
+    els.pBadge.hidden = false;
+    els.pBadge.textContent = track.full ? "FULL" : "0:30";
+    els.pBadge.className = "badge " + (track.full ? "full" : "prev");
+    els.pYt.hidden = false;
+  } else {
+    els.pBadge.hidden = true;
+    els.pYt.hidden = true;
+  }
 }
 function togglePlay() {
   if (!state.current) return;
@@ -203,9 +259,8 @@ function placeholderArt() {
 const VIEW_TITLES = {
   home: "Home", live: "Live Radio",
   english: "Top 50 English Songs", mandarin: "Top 50 Mandarin Songs",
-  search: "Search Results",
+  free: "Free Full Songs", search: "Search Results",
 };
-
 function setView(view, playlistId) {
   state.view = view;
   state.openPlaylist = playlistId || null;
@@ -217,7 +272,6 @@ function setView(view, playlistId) {
   renderLibrary();
   render();
 }
-
 function render() {
   closeAddMenu();
   switch (state.view) {
@@ -225,6 +279,7 @@ function render() {
     case "live": return renderStations();
     case "english": return renderChart(TOP_ENGLISH);
     case "mandarin": return renderChart(TOP_MANDARIN);
+    case "free": return renderFree();
     case "playlist": return renderPlaylist();
   }
 }
@@ -232,28 +287,23 @@ function render() {
 function renderHome() {
   els.view.innerHTML = `
     <div class="hero-grid">
-      <div class="hero-card" data-go="live"><span class="hero-emoji">📻</span><h3>Live Radio</h3><p>Stream curated stations playing right now, 24/7.</p></div>
+      <div class="hero-card" data-go="free"><span class="hero-emoji">🎧</span><h3>Free Full Songs</h3><p>Unlimited full tracks, free &amp; legal (Audius).</p></div>
+      <div class="hero-card" data-go="live"><span class="hero-emoji">📻</span><h3>Live Radio</h3><p>Stations playing right now, 24/7.</p></div>
       <div class="hero-card" data-go="english"><span class="hero-emoji">🇬🇧</span><h3>Top 50 English</h3><p>The biggest English-language hits, ranked.</p></div>
       <div class="hero-card" data-go="mandarin"><span class="hero-emoji">🇨🇳</span><h3>Top 50 Mandarin</h3><p>華語金曲 — the top 50 Mandarin tracks.</p></div>
-      <div class="hero-card" data-go="liked"><span class="hero-emoji">❤️</span><h3>Liked Songs</h3><p>Everything you've hearted, in one place.</p></div>
     </div>
     <h2 class="section-title">Featured stations</h2>
     <div id="home-stations" class="station-grid"></div>`;
   els.view.querySelectorAll("[data-go]").forEach((c) =>
-    c.addEventListener("click", () => {
-      if (c.dataset.go === "liked") setView("playlist", LIKED_ID);
-      else setView(c.dataset.go);
-    }));
+    c.addEventListener("click", () => setView(c.dataset.go)));
   renderStationGrid(document.getElementById("home-stations"), STATIONS.slice(0, 6));
 }
 
 function renderStations() {
   els.view.innerHTML = "";
-  const groups = [...new Set(STATIONS.map((s) => s.group))];
-  groups.forEach((g) => {
+  [...new Set(STATIONS.map((s) => s.group))].forEach((g) => {
     const h = document.createElement("h2");
-    h.className = "section-title";
-    h.textContent = g;
+    h.className = "section-title"; h.textContent = g;
     els.view.appendChild(h);
     const grid = document.createElement("div");
     grid.className = "station-grid";
@@ -265,7 +315,6 @@ function renderStations() {
   note.textContent = "Mandarin & Asian stations are public community streams and may occasionally change URLs.";
   els.view.appendChild(note);
 }
-
 function renderStationGrid(container, stations) {
   container.innerHTML = "";
   stations.forEach((s) => {
@@ -279,18 +328,31 @@ function renderStationGrid(container, stations) {
 }
 
 async function renderChart(labels) {
-  els.view.innerHTML = `<div class="loading">Loading the chart…</div>`;
+  els.view.innerHTML = `<div class="hint">Tap a row for a 30-sec preview, or use ▶️ for the full song on YouTube.</div><div class="loading">Loading the chart…</div>`;
   const list = document.createElement("div");
   list.className = "track-list";
-  els.view.innerHTML = "";
-  els.view.appendChild(list);
+  els.view.querySelector(".loading").replaceWith(list);
   const resolved = [];
   for (let i = 0; i < labels.length; i++) {
     const track = await resolveTrack(labels[i]);
     resolved.push(track);
-    if (state.view !== "english" && state.view !== "mandarin") return; // user navigated away
+    if (state.view !== "english" && state.view !== "mandarin") return;
     list.appendChild(trackRow(track, i, resolved, { rank: true }));
   }
+}
+
+async function renderFree() {
+  els.view.innerHTML = `<div class="hint">Full songs streamed free &amp; legally from Audius. Use the search box up top to find any track.</div><div class="loading">Loading trending full songs…</div>`;
+  const tracks = await audiusTrending(40);
+  if (state.view !== "free") return;
+  if (!tracks.length) {
+    els.view.innerHTML = `<div class="empty">Couldn't reach Audius right now.<br>Check your connection and try again.</div>`;
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "track-list";
+  els.view.querySelector(".loading").replaceWith(list);
+  tracks.forEach((t, i) => list.appendChild(trackRow(t, i, tracks, { rank: true })));
 }
 
 function trackRow(track, i, queue, opts = {}) {
@@ -298,38 +360,37 @@ function trackRow(track, i, queue, opts = {}) {
   row.className = "track";
   row.dataset.trackId = track.id;
   if (state.current && state.current.id === track.id) row.classList.add("playing");
-
   const liked = inLiked(track);
-  const dragHandle = opts.reorder ? `<div class="drag-handle" title="Drag to reorder">⋮⋮</div>` : "";
-  const rank = opts.rank ? `<div class="track-rank">${i + 1}</div>` : `<div class="track-rank">${opts.reorder ? "" : i + 1}</div>`;
+  const lead = opts.reorder
+    ? `<div class="drag-handle" title="Drag to reorder">⋮⋮</div>`
+    : `<div class="track-rank">${opts.rank ? i + 1 : ""}</div>`;
+  const badge = `<span class="badge ${track.full ? "full" : "prev"}">${track.full ? "FULL" : "0:30"}</span>`;
   const removeBtn = opts.removable ? `<button class="icon-btn remove-btn" title="Remove">✕</button>` : "";
-
   row.innerHTML = `
-    ${opts.reorder ? dragHandle : rank}
+    ${lead}
     <img class="track-art" src="${track.art || placeholderArt()}" alt="" />
     <div class="track-info">
       <div class="track-name">${escapeHtml(track.title)}</div>
       <div class="track-artist">${escapeHtml(track.artist)}</div>
     </div>
     <div class="track-actions">
+      ${badge}
+      <button class="icon-btn yt-btn" title="Watch full song on YouTube">▶️</button>
       <button class="icon-btn add-btn" title="Add to playlist">＋</button>
       <button class="icon-btn fav-btn ${liked ? "fav" : ""}" title="Like">${liked ? "❤️" : "🤍"}</button>
       ${removeBtn}
     </div>`;
-
   row.addEventListener("click", (e) => {
-    if (e.target.closest(".fav-btn") || e.target.closest(".add-btn") || e.target.closest(".remove-btn")) return;
+    if (e.target.closest(".fav-btn") || e.target.closest(".add-btn") || e.target.closest(".remove-btn") || e.target.closest(".yt-btn")) return;
     playTrack(track, queue, i);
   });
   row.querySelector(".fav-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleLiked(track); });
   row.querySelector(".add-btn").addEventListener("click", (e) => { e.stopPropagation(); openAddMenu(e.currentTarget, track); });
+  row.querySelector(".yt-btn").addEventListener("click", (e) => { e.stopPropagation(); openYouTube(track.yt || `${track.title} ${track.artist}`); });
   if (opts.removable)
     row.querySelector(".remove-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      removeFromPlaylist(state.openPlaylist, track.id);
-      render(); renderLibrary();
+      e.stopPropagation(); removeFromPlaylist(state.openPlaylist, track.id); render(); renderLibrary();
     });
-
   if (opts.reorder) enableDrag(row, i);
   return row;
 }
@@ -338,7 +399,6 @@ function renderPlaylist() {
   const pl = getPlaylist(state.openPlaylist);
   if (!pl) { setView("home"); return; }
   els.view.innerHTML = "";
-
   const header = document.createElement("div");
   header.className = "playlist-header";
   header.innerHTML = `
@@ -353,7 +413,6 @@ function renderPlaylist() {
       </div>
     </div>`;
   els.view.appendChild(header);
-
   if (!pl.tracks.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
@@ -361,12 +420,10 @@ function renderPlaylist() {
     els.view.appendChild(empty);
   } else {
     const list = document.createElement("div");
-    list.className = "track-list";
-    list.id = "pl-list";
+    list.className = "track-list"; list.id = "pl-list";
     els.view.appendChild(list);
     pl.tracks.forEach((t, i) => list.appendChild(trackRow(t, i, pl.tracks, { reorder: true, removable: true })));
   }
-
   const playAll = document.getElementById("play-all");
   if (playAll) playAll.addEventListener("click", () => playTrack(pl.tracks[0], pl.tracks, 0));
   const renameBtn = document.getElementById("rename-pl");
@@ -389,11 +446,9 @@ function enableDrag(row, index) {
   row.addEventListener("dragover", (e) => { e.preventDefault(); row.classList.add("drop-target"); });
   row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
   row.addEventListener("drop", (e) => {
-    e.preventDefault();
-    row.classList.remove("drop-target");
+    e.preventDefault(); row.classList.remove("drop-target");
     if (dragFrom === null || dragFrom === index) return;
-    reorderPlaylist(state.openPlaylist, dragFrom, index);
-    render();
+    reorderPlaylist(state.openPlaylist, dragFrom, index); render();
   });
 }
 
@@ -408,19 +463,14 @@ function openAddMenu(anchor, track) {
         <span class="check">${p.tracks.some((t) => t.id === track.id) ? "✓" : ""}</span>
       </button>`).join("")}
     <button class="add-menu-item new" data-new="1">＋ New playlist…</button>`;
-
   const r = anchor.getBoundingClientRect();
   els.addMenu.hidden = false;
   const menuW = 240;
-  let left = r.right - menuW;
-  if (left < 8) left = 8;
-  let top = r.bottom + 6;
+  let left = r.right - menuW; if (left < 8) left = 8;
   els.addMenu.style.left = left + "px";
-  els.addMenu.style.top = top + "px";
-  // if it would overflow bottom, show above
+  els.addMenu.style.top = (r.bottom + 6) + "px";
   const mh = els.addMenu.offsetHeight;
-  if (top + mh > window.innerHeight - 100) els.addMenu.style.top = (r.top - mh - 6) + "px";
-
+  if (r.bottom + 6 + mh > window.innerHeight - 100) els.addMenu.style.top = (r.top - mh - 6) + "px";
   els.addMenu.querySelectorAll(".add-menu-item").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -432,8 +482,7 @@ function openAddMenu(anchor, track) {
         if (getPlaylist(id).tracks.some((t) => t.id === track.id)) removeFromPlaylist(id, track.id);
         else addToPlaylist(id, track);
       }
-      closeAddMenu();
-      refreshFavStates(); renderLibrary();
+      closeAddMenu(); refreshFavStates(); renderLibrary();
       if (state.view === "playlist") render();
     });
   });
@@ -456,30 +505,40 @@ function renderLibrary() {
   });
 }
 
-/* ---------- Search ---------- */
+/* ---------- Search (Audius full songs + iTunes previews) ---------- */
 async function runSearch(q) {
   if (!q.trim()) return;
   setView("search");
   els.view.innerHTML = `<div class="loading">Searching for “${escapeHtml(q)}”…</div>`;
+  let audius = [], itunes = [];
   try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=30`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const tracks = (data.results || []).map((r) => ({
-      id: "it" + r.trackId, title: r.trackName, artist: r.artistName,
-      art: r.artworkUrl100 ? r.artworkUrl100.replace("100x100", "200x200") : "",
-      preview: r.previewUrl || "", type: "song",
-    }));
-    if (state.view !== "search") return;
-    if (!tracks.length) { els.view.innerHTML = `<div class="empty">No results for “${escapeHtml(q)}”.</div>`; return; }
-    const wrap = document.createElement("div");
-    wrap.className = "track-list";
-    els.view.innerHTML = "";
-    els.view.appendChild(wrap);
-    tracks.forEach((t, i) => wrap.appendChild(trackRow(t, i, tracks, { rank: false })));
-  } catch {
-    els.view.innerHTML = `<div class="empty">Search is unavailable right now (network blocked).</div>`;
+    [audius, itunes] = await Promise.all([
+      audiusSearch(q, 25),
+      fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=25`)
+        .then((r) => r.json()).then((d) => (d.results || []).map(itunesToTrack)).catch(() => []),
+    ]);
+  } catch {}
+  if (state.view !== "search") return;
+  if (!audius.length && !itunes.length) {
+    els.view.innerHTML = `<div class="empty">No results for “${escapeHtml(q)}” (or the network is blocked).</div>`;
+    return;
   }
+  els.view.innerHTML = "";
+  if (audius.length) {
+    addSearchSection("🎧 Full songs (free, Audius)", audius);
+  }
+  if (itunes.length) {
+    addSearchSection("🍎 30-second previews (iTunes) — use ▶️ for full song on YouTube", itunes);
+  }
+}
+function addSearchSection(titleText, tracks) {
+  const h = document.createElement("h2");
+  h.className = "section-title"; h.textContent = titleText;
+  els.view.appendChild(h);
+  const list = document.createElement("div");
+  list.className = "track-list";
+  els.view.appendChild(list);
+  tracks.forEach((t, i) => list.appendChild(trackRow(t, i, tracks, {})));
 }
 
 /* ---------- Helpers ---------- */
@@ -497,12 +556,9 @@ function refreshFavStates() {
     els.fav.textContent = liked ? "❤️" : "🤍";
     els.fav.classList.toggle("fav", liked);
   } else els.fav.textContent = "🤍";
-
   document.querySelectorAll(".track").forEach((row) => {
-    const id = row.dataset.trackId;
-    const btn = row.querySelector(".fav-btn");
-    if (!btn) return;
-    const liked = (getPlaylist(LIKED_ID)?.tracks || []).some((t) => t.id === id);
+    const btn = row.querySelector(".fav-btn"); if (!btn) return;
+    const liked = (getPlaylist(LIKED_ID)?.tracks || []).some((t) => t.id === row.dataset.trackId);
     btn.textContent = liked ? "❤️" : "🤍";
     btn.classList.toggle("fav", liked);
   });
@@ -515,17 +571,16 @@ function markPlayingRows() {
 /* ---------- Events ---------- */
 document.querySelectorAll(".nav-item").forEach((b) =>
   b.addEventListener("click", () => setView(b.dataset.view)));
-
 els.playBtn.addEventListener("click", togglePlay);
 els.nextBtn.addEventListener("click", playNext);
 els.prevBtn.addEventListener("click", playPrev);
 els.fav.addEventListener("click", () => { if (state.current && state.current.type === "song") toggleLiked(state.current); });
+els.pYt.addEventListener("click", () => { if (state.current) openYouTube(state.current.yt || `${state.current.title} ${state.current.artist}`); });
 els.themeBtn.addEventListener("click", toggleTheme);
 els.newPlaylistBtn.addEventListener("click", () => {
   const name = prompt("New playlist name");
   if (name && name.trim()) { const id = createPlaylist(name.trim()); setView("playlist", id); }
 });
-
 els.volume.addEventListener("input", () => { audio.volume = els.volume.value / 100; });
 audio.volume = els.volume.value / 100;
 els.seek.addEventListener("input", () => {
@@ -541,7 +596,6 @@ audio.addEventListener("timeupdate", () => {
 audio.addEventListener("ended", playNext);
 audio.addEventListener("play", () => { els.playBtn.textContent = "⏸"; });
 audio.addEventListener("pause", () => { els.playBtn.textContent = "▶"; });
-
 els.searchBtn.addEventListener("click", () => runSearch(els.searchInput.value));
 els.searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(els.searchInput.value); });
 

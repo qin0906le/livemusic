@@ -6,11 +6,16 @@ no API keys.
 
 ## Features
 
+- **🎧 Free Full Songs** — full-length tracks streamed **free and legally** from
+  [Audius](https://audius.co) (no API key). Browse trending or search for anything.
 - **📻 Live Radio** — streams real public internet radio in the browser, 24/7. Stations are grouped
   into **Chill & Eclectic** (SomaFM) and **Mandarin & Asian** pop.
 - **🇬🇧 Top 50 English** & **🇨🇳 Top 50 Mandarin** — curated charts. Each track is resolved to
   album art and a **30-second preview** via the free iTunes Search API (no key required).
-- **🔍 Search** — find any song or artist and play its preview.
+- **▶️ Watch on YouTube** — every song has a button that opens the full official track on YouTube.
+- **🏷 FULL / 0:30 badges** — every song shows whether in-app playback is the full song
+  (Audius / live radio) or a 30-second preview (iTunes).
+- **🔍 Search** — searches Audius (full songs) **and** iTunes (previews) together.
 - **❤️ Multiple playlists** — a built-in **Liked Songs** plus any number of custom playlists you
   create. Use ＋ on a song to add it to one (or several), **drag to reorder**, rename, or delete.
   Everything is stored in your browser (`localStorage`) and survives reloads.
@@ -56,7 +61,11 @@ https://<your-username>.github.io/livemusic/
 
 ## Notes
 
-- Song previews are **30-second clips** served by Apple's public catalog — full tracks are
-  not streamed (that requires licensing).
-- Live radio and previews need internet access. If the network is blocked, songs still list
-  with their title and artist; previews simply won't play.
+- **Full songs:** the **Free Full Songs** section and search results badged **FULL** play
+  complete tracks via Audius (free, legal, no key) — its catalog leans toward independent
+  artists. **Live Radio** is also full, continuous audio.
+- **Mainstream Top 50 hits** are owned by major labels, so in-app they play as **30-second
+  previews** (iTunes). Use the **▶️ YouTube** button on any song to hear the full official track —
+  the legal, free way to stream label-owned music.
+- Everything network-dependent (Audius, previews, radio, YouTube) needs internet access. If a
+  source is blocked, songs still list with title/artist; that source simply won't play.

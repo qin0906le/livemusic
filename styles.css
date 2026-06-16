@@ -216,6 +216,21 @@ body {
 
 .empty { color: var(--text-dim); text-align: center; padding: 60px 20px; }
 .loading { color: var(--text-dim); padding: 20px 0; }
+.hint {
+  color: var(--text-dim); font-size: 13px; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px;
+}
+
+/* FULL / preview badge */
+.badge {
+  font-size: 10px; font-weight: 800; letter-spacing: .4px;
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+}
+.badge.full { background: rgba(29,185,84,.18); color: var(--accent); }
+.badge.prev { background: rgba(255,255,255,.08); color: var(--text-dim); }
+.yt-btn { font-size: 15px; }
+.yt-btn:hover { color: #ff2f46; }
+#player-badge { margin-right: 2px; }
 
 /* Player bar */
 .player {
